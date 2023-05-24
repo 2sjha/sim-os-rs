@@ -1,7 +1,12 @@
 use std::env;
 use std::io;
 mod computer;
+mod cpu;
+mod memory;
+mod print;
 mod printer;
+mod scheduler;
+mod shell;
 mod utils;
 
 fn main() {
@@ -9,13 +14,16 @@ fn main() {
     let mut argsv: Vec<String> = env::args().collect();
     let cid: u16;
     if argc == 2 {
-        let read_cid: i32 = argsv[1].trim().parse::<i32>().expect("CID is not a number");
-        cid = utils::validate_cid(read_cid, printer::printer_cid);
+        let read_cid: i32 = argsv[1]
+            .trim()
+            .parse::<i32>()
+            .unwrap_or_else(|_| panic!("CID is not a number: {}", argsv[1]));
+        cid = crate::utils::validate_cid(read_cid, crate::printer::printer_cid);
     } else {
         eprintln!("Usage : ./computer.exe <CID>");
         eprintln!(
             "CID={} reserved for Printer, Other integer CIDs act as client computers.",
-            printer::printer_cid
+            crate::printer::printer_cid
         );
         print!("Input CID: ");
         let mut read_cid_str: String;
@@ -26,9 +34,9 @@ fn main() {
         let read_cid: i32 = read_cid_str
             .trim()
             .parse::<i32>()
-            .expect("CID is not a number");
-        cid = utils::validate_cid(read_cid, printer::printer_cid);
+            .unwrap_or_else(|_| panic!("CID is not a number: {}", read_cid_str));
+        cid = crate::utils::validate_cid(read_cid, crate::printer::printer_cid);
     }
 
-    computer::run(cid);
+    crate::computer::run(cid);
 }
