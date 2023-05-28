@@ -2,10 +2,12 @@ use crate::memory::{self, Memory};
 use crate::shell;
 use std::{thread, time};
 
+#[Derive(Copy, Clone)]
 pub struct Register {
     pub reg_val: i32,
 }
 
+#[Derive(Copy, Clone)]
 pub struct RegisterFile {
     pub pc: Register,
     pub ir0: Register,
@@ -23,7 +25,7 @@ impl Register {
 }
 
 impl RegisterFile {
-    fn new() -> RegisterFile {
+    pub fn new() -> RegisterFile {
         Self {
             pc: Register::new(0),
             ir0: Register::new(0),
@@ -92,7 +94,7 @@ fn cpu_execute_instruction(mut regs: RegisterFile, mut mem: Memory) {
             }
         }
         9 => {
-            shell::shell_inst(regs, mem, regs.ir1.reg_val);
+            shell::shell_instruction(regs, mem, &regs.ir1.reg_val);
         }
         _ => {
             panic!(
@@ -104,13 +106,15 @@ fn cpu_execute_instruction(mut regs: RegisterFile, mut mem: Memory) {
 }
 
 fn cpu_operation(regs: RegisterFile, mem: Memory, time_quantum: u16) -> i8 {
-    for i in 0..time_quantum {
+    let mut i: u16 = 0;
+    while i < time_quantum {
         if regs.ir0.reg_val == 0 {
             return 1;
         }
 
         cpu_fetch_instruction(regs, mem);
         cpu_execute_instruction(regs, mem);
+        i += 1;
     }
 
     return -1;

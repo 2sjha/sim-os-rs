@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "sim-os-rs"
+name = "sim-os-rs-p3"
 version = "0.1.0"
