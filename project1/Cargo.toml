@@ -2,3 +2,7 @@
 name = "sim-os-rs-p1"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "computer"
+path = "src/main.rs"

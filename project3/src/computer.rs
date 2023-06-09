@@ -8,37 +8,18 @@ use std::fs::File;
 use std::io::Read;
 use std::thread;
 
-pub struct PrintManagerConfig {
-    print_time: u16,
-    pm_ip: String,
-    pm_port: u16,
-    n_comms: u16,
-    conn_qsize: u16,
-    msg_qsize: u16,
-}
-
 struct SysConfig {
     cid: u16,
     mem_size: u32,
     time_quantum: u16,
 }
 
-fn boot_system(
-    sysconfig: SysConfig,
-    pmconfig: PrintManagerConfig,
-) -> Option<(RegisterFile, Memory)> {
-    if sysconfig.cid != printer::printer_cid {
-        let regs: RegisterFile = cpu::cpu_regs_init();
-        let mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
-        scheduler::scheduler_init(sysconfig.time_quantum);
-        print::print_init(pmconfig.pm_ip, pmconfig.pm_port);
+fn boot_system(sysconfig: SysConfig) -> (RegisterFile, Memory) {
+    let regs: RegisterFile = cpu::cpu_regs_init();
+    let mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
+    scheduler::scheduler_init(sysconfig.time_quantum);
 
-        return Option::Some((regs, mem));
-    } else {
-        printer::printer_manager_init(pmconfig);
-        printer::printer_init(pmconfig.print_time, pmconfig.n_comms);
-        return Option::None;
-    }
+    (regs, mem);
 }
 
 fn parse_config_params(config_str: String) -> (SysConfig, PrintManagerConfig) {

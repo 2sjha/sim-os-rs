@@ -2,12 +2,12 @@ use crate::memory::{self, Memory};
 use crate::shell;
 use std::{thread, time};
 
-#[Derive(Copy, Clone)]
+// #[derive(Copy, Clone)]
 pub struct Register {
     pub reg_val: i32,
 }
 
-#[Derive(Copy, Clone)]
+// #[derive(Copy, Clone)]
 pub struct RegisterFile {
     pub pc: Register,
     pub ir0: Register,
@@ -42,36 +42,43 @@ pub fn cpu_regs_init() -> RegisterFile {
     RegisterFile::new()
 }
 
-fn cpu_mem_address(mut regs: RegisterFile, mut mem: Memory, mem_addr: i32) -> i32 {
+fn cpu_mem_address(mut regs: &mut RegisterFile, mem: &Memory, mem_addr: i32) -> i32 {
     regs.mar.reg_val = regs.base.reg_val + mem_addr;
     memory::mem_read(regs, mem);
 
     return regs.mbr.reg_val;
 }
 
-fn cpu_fetch_instruction(mut regs: RegisterFile, mut mem: Memory) {
+fn cpu_fetch_instruction(regs: &mut RegisterFile, mem: &mut Memory) {
     regs.ir0.reg_val = cpu_mem_address(regs, mem, regs.pc.reg_val);
     regs.ir1.reg_val = cpu_mem_address(regs, mem, regs.pc.reg_val + 1);
     regs.pc.reg_val += 2;
 }
 
-fn cpu_execute_instruction(mut regs: RegisterFile, mut mem: Memory) {
+fn cpu_execute_instruction(mut regs: &mut RegisterFile, mut mem: &mut Memory) {
+    let mem_addr: i32;
+
     match regs.ir0.reg_val {
         0 => { /*Program exit, so do nothing */ }
         1 => regs.ac.reg_val = regs.ir1.reg_val,
-        2 => regs.ac.reg_val = cpu_mem_address(regs, mem, regs.ir1.reg_val),
+        2 => {
+            mem_addr = regs.ir1.reg_val;
+            regs.ac.reg_val = cpu_mem_address(&mut regs, &mut mem, mem_addr)
+        }
         3 => {
-            cpu_mem_address(regs, mem, regs.ir1.reg_val);
+            mem_addr = regs.ir1.reg_val;
+            cpu_mem_address(&mut regs, &mut mem, mem_addr);
             regs.ac.reg_val += regs.mbr.reg_val;
         }
         4 => {
-            cpu_mem_address(regs, mem, regs.ir1.reg_val);
+            mem_addr = regs.ir1.reg_val;
+            cpu_mem_address(&mut regs, &mut mem, mem_addr);
             regs.ac.reg_val *= regs.mbr.reg_val;
         }
         5 => {
             regs.mbr.reg_val = regs.ac.reg_val;
             regs.mar.reg_val = regs.base.reg_val + regs.ir1.reg_val;
-            memory::mem_write(regs, mem);
+            memory::mem_write(&mut regs, &mut mem);
         }
         6 => {
             if regs.ac.reg_val > 0 {
@@ -94,7 +101,7 @@ fn cpu_execute_instruction(mut regs: RegisterFile, mut mem: Memory) {
             }
         }
         9 => {
-            shell::shell_instruction(regs, mem, &regs.ir1.reg_val);
+            shell::shell_instruction(regs, mem, regs.ir1.reg_val);
         }
         _ => {
             panic!(
@@ -105,7 +112,7 @@ fn cpu_execute_instruction(mut regs: RegisterFile, mut mem: Memory) {
     }
 }
 
-fn cpu_operation(regs: RegisterFile, mem: Memory, time_quantum: u16) -> i8 {
+pub fn cpu_operation(regs: &mut RegisterFile, mem: &mut Memory, time_quantum: u16) -> i8 {
     let mut i: u16 = 0;
     while i < time_quantum {
         if regs.ir0.reg_val == 0 {
@@ -120,7 +127,7 @@ fn cpu_operation(regs: RegisterFile, mem: Memory, time_quantum: u16) -> i8 {
     return -1;
 }
 
-pub fn cpu_reg_dump(regs: RegisterFile) {
+pub fn cpu_reg_dump(regs: &RegisterFile) {
     println!("===========================================");
     println!("               Register Dump");
     println!("===========================================");
