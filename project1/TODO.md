@@ -1,1 +1,0 @@
-## The app panics a lot, remove panics on invalid commmand

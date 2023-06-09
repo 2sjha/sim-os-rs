@@ -2,20 +2,25 @@ use crate::cpu::{self, RegisterFile};
 use crate::memory::{self, Memory};
 use crate::print;
 use crate::printer;
-use crate::scheduler;
+// use crate::scheduler;
 use std::io::Read;
 use std::{fs, io};
 
-fn shell_load_prog(mut mem: Memory, prog_fname: &str, p_addr: usize) {
-    let mut n_code: usize;
-    let mut n_data: usize;
+fn shell_load_prog(mem: &mut Memory, prog_fname: &str, p_addr: usize) {
+    let mut n_code: usize = 0;
+    let mut n_data: usize = 0;
     let mut op_code: u16;
     let mut operand: i32;
     let mut i: usize;
     let mut j: usize;
-    let mut prog_f: fs::File = fs::File::open(prog_fname).expect("Can't open config file.");
+    let mut prog_f: fs::File = fs::File::open(prog_fname).expect("Can't open file.");
     let mut prog_str: String = String::new();
-    prog_f.read_to_string(&mut prog_str);
+    let prog_f_resutlt: Result<usize, io::Error> = prog_f.read_to_string(&mut prog_str);
+
+    if prog_f_resutlt.is_err() {
+        eprintln!("Couldnt read file: {}", prog_fname);
+        return;
+    }
 
     let prog_lines: Vec<&str> = prog_str.split("\n").collect();
     let prog_meta_parts: Vec<&str> = prog_lines[0].split(" ").collect();
@@ -29,7 +34,7 @@ fn shell_load_prog(mut mem: Memory, prog_fname: &str, p_addr: usize) {
     i = p_addr;
     j = 1;
     while i < (p_addr + 2 * n_code) {
-        let prog_line: Vec<&str> = prog_lines[j].split(" ").collect();
+        let prog_line: Vec<&str> = prog_lines[j].trim_end().split(" ").collect();
         op_code = prog_line[0]
             .parse::<u16>()
             .unwrap_or_else(|_| panic!("Couldn't read op_code: {}", prog_line[0]));
@@ -54,49 +59,60 @@ fn shell_load_prog(mut mem: Memory, prog_fname: &str, p_addr: usize) {
         mem.arr[i] = operand;
 
         i += 1;
+        j += 1;
     }
 }
 
-fn shell_terminate_system(mut shut_down: bool) {
+fn shell_terminate_system(shut_down: &mut bool) {
     println!("[shell] (shell_terminate_system) : Shell shut down started.");
-    shut_down = true;
+    *shut_down = true;
 }
 
-fn shell_process_submit(mut mem: Memory) {
+fn shell_process_submit(mut mem: &mut Memory, mut regs: &mut RegisterFile) {
     let mut prog_input: String = String::new();
-    let mut prog_fname: &str;
-    let mut base: usize;
+    let prog_fname: &str;
+    let mut base: usize = 0;
 
     println!("Input Program File and Base Address: ");
     io::stdin()
         .read_line(&mut prog_input)
         .expect("Could not input program details.");
 
-    let prog_in_parts: Vec<&str> = prog_input.split(" ").collect();
+    let prog_in_parts: Vec<&str> = prog_input.trim_end().split(" ").collect();
     prog_fname = prog_in_parts[0];
     base = prog_in_parts[1]
         .parse::<usize>()
         .unwrap_or_else(|_| panic!("Invalid base: {}", base));
 
-    shell_load_prog(mem, prog_fname, base);
+    shell_load_prog(&mut mem, prog_fname, base);
 
-    scheduler::process_submit(prog_fname, base);
+    regs.base.reg_val = base as i32;
+    regs.pc.reg_val = 0;
+    regs.ir0.reg_val = -1;
+    regs.ir1.reg_val = -1;
+    regs.ac.reg_val = 0;
+    regs.mar.reg_val = 0;
+    regs.mbr.reg_val = 0;
+
+    cpu::cpu_operation(&mut regs, &mut mem, 1000);
+
+    // scheduler::process_submit(prog_fname, base);
 }
 
-fn shell_print_registers(regs: RegisterFile) {
+fn shell_print_registers(regs: &RegisterFile) {
     cpu::cpu_reg_dump(regs);
 }
 
-fn shell_print_memory(mem: Memory) {
+fn shell_print_memory(mem: &Memory) {
     memory::mem_dump(mem);
 }
 
-fn shell_print_readyQ() {
-    scheduler::process_dump_readyQ();
+fn shell_print_ready_q() {
+    // scheduler::process_dump_readyQ();
 }
 
-fn shell_print_PCB() {
-    scheduler::process_dump_PCBs();
+fn shell_print_pcb() {
+    // scheduler::process_dump_PCBs();
 }
 
 fn shell_print_spools() {
@@ -107,7 +123,7 @@ fn shell_print_all_spools() {
     printer::printer_manager_all_spools_dump();
 }
 
-pub fn shell_instruction(regs: RegisterFile, mem: Memory, cmd: &i32) {
+pub fn shell_instruction(regs: &RegisterFile, mem: &Memory, cmd: i32) {
     match cmd {
         2 => shell_print_registers(regs),
         3 => shell_print_memory(mem),
@@ -115,60 +131,75 @@ pub fn shell_instruction(regs: RegisterFile, mem: Memory, cmd: &i32) {
     }
 }
 
-pub fn printer_shell_command(mut shut_down: bool, cmd: u8) {
+pub fn printer_shell_command(mut shut_down: &mut bool, cmd: u8) {
     match cmd {
         0 => {
             shell_terminate_system(shut_down);
-            printer::printer_manager_terminate(shut_down);
+            printer::printer_manager_terminate(&mut shut_down);
         }
-        1 => shell_print_all_spools(),
+        6 => shell_print_all_spools(),
         _ => eprint!("[shell] (printer_shell_command) : Invalid Cmd {}.", cmd),
     }
 }
 
-fn shell_command(regs: RegisterFile, mem: Memory, mut shut_down: bool, cmd: u8) {
+fn shell_command(
+    mut regs: &mut RegisterFile,
+    mut mem: &mut Memory,
+    mut shut_down: &mut bool,
+    cmd: u8,
+) {
     match cmd {
-        0 => shell_terminate_system(shut_down),
-        1 => shell_process_submit(mem),
+        0 => shell_terminate_system(&mut shut_down),
+        1 => shell_process_submit(&mut mem, &mut regs),
         2 => shell_print_registers(regs),
         3 => shell_print_memory(mem),
-        4 => shell_print_readyQ(),
-        5 => shell_print_PCB(),
+        4 => shell_print_ready_q(),
+        5 => shell_print_pcb(),
         6 => shell_print_spools(),
         _ => eprintln!("[shell] (shell_command) : Invalid Command {}.", cmd),
     }
 }
 
-pub fn shell_operation(regs: RegisterFile, mem: Memory, mut shut_down: bool) {
+pub fn shell_operation(
+    mut regs: &mut RegisterFile,
+    mut mem: &mut Memory,
+    mut shut_down: &mut bool,
+) {
     let mut cmd_str: String = String::new();
     let mut cmd: u8;
-    while !shut_down {
+    while !(*shut_down) {
         println!("Input Shell Command: ");
         io::stdin()
             .read_line(&mut cmd_str)
             .expect("Couldn't read input command.");
-        cmd = cmd_str
+
+        let cmd_str_trimmed: &str = cmd_str.trim_end();
+        cmd = cmd_str_trimmed
             .parse::<u8>()
             .unwrap_or_else(|_| panic!("Invalid shell command: {}", cmd_str));
-        shell_command(regs, mem, shut_down, cmd);
+        cmd_str.clear();
+        shell_command(&mut regs, &mut mem, &mut shut_down, cmd);
     }
 
     println!("[shell] (shell_operation) : Shell shut down complete.\n");
 }
 
-pub fn printer_shell_operation(mut shut_down: bool) {
+pub fn printer_shell_operation(mut shut_down: &mut bool) {
     let mut cmd_str: String = String::new();
     let mut cmd: u8;
-    while !shut_down {
+    while !*shut_down {
         println!("Input Shell Command: ");
         println!("0: Printer Shutdown & 6: All Spool Dump");
         io::stdin()
             .read_line(&mut cmd_str)
             .expect("Couldn't read input command.");
-        cmd = cmd_str
+
+        let cmd_str_trimmed: &str = cmd_str.trim_end();
+        cmd = cmd_str_trimmed
             .parse::<u8>()
             .unwrap_or_else(|_| panic!("Invalid shell command: {}", cmd_str));
-        printer_shell_command(shut_down, cmd);
+        cmd_str.clear();
+        printer_shell_command(&mut shut_down, cmd);
     }
 
     println!("[shell] (printer_shell_operation) : Printer Shell shut down complete.\n");
