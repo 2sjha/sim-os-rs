@@ -2,11 +2,12 @@ use crate::cpu::{self, RegisterFile};
 use crate::memory::{self, Memory};
 use crate::print;
 use crate::printer;
-// use crate::scheduler;
+use crate::scheduler::{self, PCB};
 use crate::shell;
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Read;
-// use std::thread;
+use std::thread;
 
 pub struct PrintManagerConfig {
     print_time: u16,
@@ -51,7 +52,9 @@ fn boot_system(
     if sysconfig.cid != printer::PRINTER_CID {
         let regs: RegisterFile = cpu::cpu_regs_init();
         let mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
-        // scheduler::scheduler_init(sysconfig.time_quantum);
+        let pcblist : VecDeque<PCB>;
+        let 
+        (pcblist, readyq, proc_idle)= scheduler::scheduler_init(sysconfig.time_quantum);
         print::print_init(pmconfig.pm_ip, pmconfig.pm_port);
 
         return Option::Some((regs, mem));
@@ -62,13 +65,16 @@ fn boot_system(
     }
 }
 
-fn parse_config_params(config_str: String) -> (SysConfig, PrintManagerConfig) {
+fn parse_config_params(
+    config_str: String,
+    mut sysconfig: &mut SysConfig,
+    mut pmconfig: &mut PrintManagerConfig,
+) {
     // config.sys must be in this format = "PM_IP:{}\nPM_PORT:{}\nM:{}\nTQ:{}\nPT:{}\nNC:{}\nCQS:{}\nMQS:{}"
-    let mut sysconfig: SysConfig = SysConfig::new();
-    let mut pmconfig: PrintManagerConfig = PrintManagerConfig::new();
-
     let config_str_parts: Vec<&str> = config_str.split("\n").collect();
-    for config in config_str_parts {
+
+    for mut config in config_str_parts {
+        config = config.trim();
         if config.contains("PM_IP:") {
             pmconfig.pm_ip = String::from(&config[6..]);
         } else if config.contains("PM_PORT:") {
@@ -103,17 +109,15 @@ fn parse_config_params(config_str: String) -> (SysConfig, PrintManagerConfig) {
             eprintln!("Unexpected config: {} in config.sys.", config);
         }
     }
-
-    (sysconfig, pmconfig)
 }
 
 pub fn run(cid: u16) {
-    let config_fname: &str = "config.sys"; // config.sys must be present at the project root
+    let config_fname: &str = "config.sys";
     let mut config_f: File =
         File::open(config_fname).unwrap_or_else(|_| panic!("Can't open config file."));
     let mut config_str: String = String::new();
     let mut sysconfig: SysConfig = SysConfig::new();
-    let pmconfig: PrintManagerConfig;
+    let pmconfig: PrintManagerConfig = PrintManagerConfig::new();
     let mut regs: RegisterFile;
     let mut mem: Memory;
     let mut shut_down: bool = false;
@@ -125,18 +129,16 @@ pub fn run(cid: u16) {
         return;
     }
 
-    (sysconfig, pmconfig) = parse_config_params(config_str);
+    parse_config_params(config_str, &mut sysconfig, &mut pmconfig);
     let hw_option: Option<(RegisterFile, Memory)> = boot_system(sysconfig, pmconfig);
 
     // Run shell and scheduler on client computers only
     if cid != printer::PRINTER_CID && hw_option.is_some() {
         (regs, mem) = hw_option.unwrap();
-        shell::shell_operation(&mut regs, &mut mem, &mut shut_down);
-        // thread::spawn(move || shell::shell_operation(&mut regs, &mut mem, &mut shut_down));
-        // scheduler::process_execute(shut_down);
+        thread::spawn(move || shell::shell_operation(&mut regs, &mut mem, &mut shut_down));
+        scheduler::process_execute(&shut_down);
     } else {
-        shell::printer_shell_operation(&mut shut_down);
-        // thread::spawn(move || shell::printer_shell_operation(&mut shut_down));
-        // printer::printer_manager_main(shut_down);
+        thread::spawn(move || shell::printer_shell_operation(&mut shut_down));
+        printer::printer_manager_main(shut_down);
     }
 }

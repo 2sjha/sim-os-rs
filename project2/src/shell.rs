@@ -1,12 +1,13 @@
 use crate::cpu::{self, RegisterFile};
 use crate::memory::{self, Memory};
 use crate::print;
-use crate::printer;
-// use crate::scheduler;
+use crate::scheduler::{self, PCB};
+use std::collections::VecDeque;
 use std::io::Read;
+use std::sync::{Arc, Mutex};
 use std::{fs, io};
 
-pub fn shell_load_prog(mem: &mut Memory, prog_fname: &str, p_addr: usize) {
+pub fn shell_load_prog(mem: Arc<Mutex<Memory>>, prog_fname: &str, p_addr: usize) {
     let mut n_code: usize = 0;
     let mut n_data: usize = 0;
     let mut op_code: u16;
@@ -63,12 +64,17 @@ pub fn shell_load_prog(mem: &mut Memory, prog_fname: &str, p_addr: usize) {
     }
 }
 
-fn shell_terminate_system(shut_down: &mut bool) {
+fn shell_terminate_system(shut_down: &bool) {
     println!("[shell] (shell_terminate_system) : Shell shut down started.");
     *shut_down = true;
 }
 
-fn shell_process_submit(mut mem: &mut Memory, mut regs: &mut RegisterFile) {
+fn shell_process_submit(
+    mem: &Arc<Mutex<Memory>>,
+    pcblist: &Arc<Mutex<Vec<PCB>>>,
+    readyq: &Arc<Mutex<VecDeque<PCB>>>,
+    pid_count: &Arc<Mutex<u16>>,
+) {
     let mut prog_input: String = String::new();
     let prog_fname: &str;
     let mut base: usize = 0;
@@ -84,19 +90,15 @@ fn shell_process_submit(mut mem: &mut Memory, mut regs: &mut RegisterFile) {
         .parse::<usize>()
         .unwrap_or_else(|_| panic!("Invalid base: {}", base));
 
-    shell_load_prog(&mut mem, prog_fname, base);
+    shell_load_prog(mem, prog_fname, base);
 
-    regs.base.reg_val = base as i32;
-    regs.pc.reg_val = 0;
-    regs.ir0.reg_val = -1;
-    regs.ir1.reg_val = -1;
-    regs.ac.reg_val = 0;
-    regs.mar.reg_val = 0;
-    regs.mbr.reg_val = 0;
-
-    cpu::cpu_operation(&mut regs, &mut mem, 1000);
-
-    // scheduler::process_submit(prog_fname, base);
+    scheduler::process_submit(
+        pcblist,
+        readyq,
+        pid_count,
+        String::from(prog_fname),
+        base as u16,
+    );
 }
 
 fn shell_print_registers(regs: &RegisterFile) {
@@ -107,20 +109,16 @@ fn shell_print_memory(mem: &Memory) {
     memory::mem_dump(mem);
 }
 
-fn shell_print_ready_q() {
-    // scheduler::process_dump_readyQ();
+fn shell_print_ready_q(readyq: &VecDeque<PCB>) {
+    scheduler::process_dump_ready_q(readyq);
 }
 
-fn shell_print_pcb() {
-    // scheduler::process_dump_PCBs();
+fn shell_print_pcb_list(pcblist: &Vec<PCB>) {
+    scheduler::process_dump_pcb_list(pcblist);
 }
 
 fn shell_print_spools() {
     print::print_spool_dump();
-}
-
-fn shell_print_all_spools() {
-    printer::printer_manager_all_spools_dump();
 }
 
 pub fn shell_instruction(regs: &RegisterFile, mem: &Memory, cmd: i32) {
@@ -131,43 +129,38 @@ pub fn shell_instruction(regs: &RegisterFile, mem: &Memory, cmd: i32) {
     }
 }
 
-pub fn printer_shell_command(mut shut_down: &mut bool, cmd: u8) {
-    match cmd {
-        0 => {
-            shell_terminate_system(shut_down);
-            printer::printer_manager_terminate(&mut shut_down);
-        }
-        6 => shell_print_all_spools(),
-        _ => eprint!("[shell] (printer_shell_command) : Invalid Cmd {}.", cmd),
-    }
-}
-
 fn shell_command(
-    mut regs: &mut RegisterFile,
-    mut mem: &mut Memory,
-    mut shut_down: &mut bool,
-    cmd: u8,
+    regs: &Arc<Mutex<RegisterFile>>,
+    mem: &Arc<Mutex<Memory>>,
+    shut_down: &Arc<Mutex<bool>>,
+    pcblist: &Arc<Mutex<Vec<PCB>>>,
+    readyq: &Arc<Mutex<VecDeque<PCB>>>,
+    pid_count: &Arc<Mutex<u16>>,
+    cmd: &u8,
 ) {
     match cmd {
-        0 => shell_terminate_system(&mut shut_down),
-        1 => shell_process_submit(&mut mem, &mut regs),
-        2 => shell_print_registers(regs),
-        3 => shell_print_memory(mem),
-        4 => shell_print_ready_q(),
-        5 => shell_print_pcb(),
+        0 => shell_terminate_system(&shut_down.lock().unwrap()),
+        1 => shell_process_submit(mem, pcblist, readyq, pid_count),
+        2 => shell_print_registers(&regs.lock().unwrap()),
+        3 => shell_print_memory(&mem.lock().unwrap()),
+        4 => shell_print_ready_q(&readyq.lock().unwrap()),
+        5 => shell_print_pcb_list(&pcblist.lock().unwrap()),
         6 => shell_print_spools(),
         _ => eprintln!("[shell] (shell_command) : Invalid Command {}.", cmd),
     }
 }
 
 pub fn shell_operation(
-    mut regs: &mut RegisterFile,
-    mut mem: &mut Memory,
-    mut shut_down: &mut bool,
+    regs: Arc<Mutex<RegisterFile>>,
+    mem: Arc<Mutex<Memory>>,
+    shut_down: Arc<Mutex<bool>>,
+    pcblist: Arc<Mutex<Vec<PCB>>>,
+    readyq: Arc<Mutex<VecDeque<PCB>>>,
+    pid_count: Arc<Mutex<u16>>,
 ) {
     let mut cmd_str: String = String::new();
     let mut cmd: u8;
-    while !(*shut_down) {
+    while !(*shut_down.lock().unwrap()) {
         println!("Input Shell Command: ");
         io::stdin()
             .read_line(&mut cmd_str)
@@ -178,29 +171,9 @@ pub fn shell_operation(
             .parse::<u8>()
             .unwrap_or_else(|_| panic!("Invalid shell command: {}", cmd_str));
         cmd_str.clear();
-        shell_command(&mut regs, &mut mem, &mut shut_down, cmd);
+
+        shell_command(&regs, &mem, &shut_down, &pcblist, &readyq, &pid_count, &cmd);
     }
 
     println!("[shell] (shell_operation) : Shell shut down complete.\n");
-}
-
-pub fn printer_shell_operation(mut shut_down: &mut bool) {
-    let mut cmd_str: String = String::new();
-    let mut cmd: u8;
-    while !*shut_down {
-        println!("Input Shell Command: ");
-        println!("0: Printer Shutdown & 6: All Spool Dump");
-        io::stdin()
-            .read_line(&mut cmd_str)
-            .expect("Couldn't read input command.");
-
-        let cmd_str_trimmed: &str = cmd_str.trim_end();
-        cmd = cmd_str_trimmed
-            .parse::<u8>()
-            .unwrap_or_else(|_| panic!("Invalid shell command: {}", cmd_str));
-        cmd_str.clear();
-        printer_shell_command(&mut shut_down, cmd);
-    }
-
-    println!("[shell] (printer_shell_operation) : Printer Shell shut down complete.\n");
 }

@@ -2,12 +2,10 @@ use crate::memory::{self, Memory};
 use crate::shell;
 use std::{thread, time};
 
-// #[derive(Copy, Clone)]
 pub struct Register {
     pub reg_val: i32,
 }
 
-// #[derive(Copy, Clone)]
 pub struct RegisterFile {
     pub pc: Register,
     pub ir0: Register,

@@ -3,6 +3,7 @@ use crate::memory::Memory;
 use crate::print;
 use crate::shell;
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 pub struct PCB {
     pub reg_state: RegisterFile,
@@ -25,64 +26,6 @@ impl PCB {
             prog_fname: pcb.prog_fname.clone(),
         }
     }
-}
-
-pub fn process_dump_pcb_list(pcblist: &Vec<PCB>) {
-    println!("===========================================");
-    println!("           PCB Dump");
-    println!("===========================================");
-    println!("Index: [ Filename:XXXX, PID:#, BASE:#, PC:#, IR0:#, IR1:#, AC:#, MAR:#, MBR:# ]");
-
-    let mut i: usize = 0;
-    while i < pcblist.len() {
-        if pcblist[i].pid != 0 {
-            print!("{}: [ Filename: {},", i, pcblist[i].prog_fname);
-            print!(
-                " PID: {}, BASE: {},",
-                pcblist[i].pid, pcblist[i].reg_state.base.reg_val
-            );
-            print!(
-                " PC: {}, IR0: {},",
-                pcblist[i].reg_state.pc.reg_val, pcblist[i].reg_state.ir0.reg_val
-            );
-            print!(
-                " IR1: {}, AC: {},",
-                pcblist[i].reg_state.ir1.reg_val, pcblist[i].reg_state.ac.reg_val
-            );
-            print!(
-                " MAR: {}, MBR: {} ]\n",
-                pcblist[i].reg_state.mar.reg_val, pcblist[i].reg_state.mbr.reg_val
-            );
-        }
-        i += 1;
-    }
-    print!("\n");
-}
-
-pub fn process_dump_ready_q(readyq: &VecDeque<PCB>) {
-    println!("===========================================");
-    println!("           readyq Dump. RQ Size: {}", readyq.len());
-    println!("===========================================");
-    println!("Index: Process ID");
-
-    if readyq.is_empty() {
-        println!("0: 1 (Idle)");
-        return;
-    }
-
-    let mut proc_index = 0;
-
-    for proc in readyq {
-        if proc_index == 0 {
-            println!("{}: {} (Running)", proc_index, proc.pid);
-        } else {
-            println!("{}: {}", proc_index, proc.pid);
-        }
-
-        proc_index += 1;
-    }
-
-    print!("\n");
 }
 
 pub fn process_init_pcb_list(mem: &Memory) -> Vec<PCB> {
@@ -138,6 +81,38 @@ fn process_dispose_pcb(mut pcblist: &mut Vec<PCB>, pid: u16) {
     }
 }
 
+pub fn process_dump_pcb_list(pcblist: &Vec<PCB>) {
+    println!("===========================================");
+    println!("           PCB Dump");
+    println!("===========================================");
+    println!("Index: [ Filename:XXXX, PID:#, BASE:#, PC:#, IR0:#, IR1:#, AC:#, MAR:#, MBR:# ]");
+
+    let mut i: usize = 0;
+    while i < pcblist.len() {
+        if pcblist[i].pid != 0 {
+            print!("{}: [ Filename: {},", i, pcblist[i].prog_fname);
+            print!(
+                " PID: {}, BASE: {},",
+                pcblist[i].pid, pcblist[i].reg_state.base.reg_val
+            );
+            print!(
+                " PC: {}, IR0: {},",
+                pcblist[i].reg_state.pc.reg_val, pcblist[i].reg_state.ir0.reg_val
+            );
+            print!(
+                " IR1: {}, AC: {},",
+                pcblist[i].reg_state.ir1.reg_val, pcblist[i].reg_state.ac.reg_val
+            );
+            print!(
+                " MAR: {}, MBR: {} ]\n",
+                pcblist[i].reg_state.mar.reg_val, pcblist[i].reg_state.mbr.reg_val
+            );
+        }
+        i += 1;
+    }
+    print!("\n");
+}
+
 fn process_init_readyq() -> VecDeque<PCB> {
     VecDeque::new()
 }
@@ -146,12 +121,50 @@ fn process_insert_readyq(mut readyq: &mut VecDeque<PCB>, proc: PCB) {
     readyq.push_back(PCB::from(&proc));
 }
 
-fn process_fetch_readyq(mut readyq: &mut VecDeque<PCB>) -> PCB {
+fn process_fetch_readyq(mut readyq: &mut VecDeque<PCB>) -> Option<&PCB> {
     if readyq.is_empty() {
         return None;
     }
 
-    readyq.peek()
+    readyq.front()
+}
+
+fn rotate_readyq(mut readyq: &mut VecDeque<PCB>) -> Option<&PCB> {
+    if readyq.is_empty() {
+        return None;
+    }
+
+    let proc_front: &PCB = ((readyq).front()).unwrap();
+    readyq.pop_front();
+    readyq.push_back(*proc_front);
+
+    readyq.front()
+}
+
+pub fn process_dump_ready_q(readyq: &VecDeque<PCB>) {
+    println!("===========================================");
+    println!("           readyq Dump. RQ Size: {}", readyq.len());
+    println!("===========================================");
+    println!("Index: Process ID");
+
+    if readyq.is_empty() {
+        println!("0: 1 (Idle)");
+        return;
+    }
+
+    let mut proc_index = 0;
+
+    for proc in readyq {
+        if proc_index == 0 {
+            println!("{}: {} (Running)", proc_index, proc.pid);
+        } else {
+            println!("{}: {}", proc_index, proc.pid);
+        }
+
+        proc_index += 1;
+    }
+
+    print!("\n");
 }
 
 fn process_context_switch(
@@ -159,11 +172,11 @@ fn process_context_switch(
     proc_in: Option<&PCB>,
     proc_out: Option<&PCB>,
 ) {
-    if (proc_out.is_some()) {
-        proc_out.unwrap().reg_state = regs;
+    if proc_out.is_some() {
+        proc_out.unwrap().reg_state = *regs;
     }
 
-    if (proc_in.is_some()) {
+    if proc_in.is_some() {
         regs = &mut proc_in.unwrap().reg_state;
     }
 }
@@ -231,8 +244,10 @@ fn process_exit(
 
 pub fn scheduler_terminate(readyq: &mut VecDeque<PCB>, pcblist: &mut Vec<PCB>) {
     while !readyq.is_empty() {
-        let proc: PCB = process_fetch_readyq(readyq);
-        process_exit(readyq, pcblist, &proc, false);
+        let proc_option: Option<&PCB> = process_fetch_readyq(readyq);
+        if proc_option.is_some() {
+            process_exit(readyq, pcblist, proc_option.unwrap(), false);
+        }
     }
     print!("[scheduler] (scheduler_terminate) : Scheduler shut down complete.");
 
@@ -240,51 +255,58 @@ pub fn scheduler_terminate(readyq: &mut VecDeque<PCB>, pcblist: &mut Vec<PCB>) {
 }
 
 pub fn process_execute(
-    mut pcblist: &mut Vec<PCB>,
-    mut readyq: &mut VecDeque<PCB>,
-    mut regs: &mut RegisterFile,
-    mut proc_idle: &mut PCB,
-    shut_down: &bool,
-    mut curr_pid: u16,
+    pcblist: Arc<Mutex<Vec<PCB>>>,
+    readyq: Arc<Mutex<VecDeque<PCB>>>,
+    regs: Arc<Mutex<RegisterFile>>,
+    mem: Arc<Mutex<Memory>>,
+    shut_down: Arc<Mutex<bool>>,
+    curr_pid: Arc<Mutex<u16>>,
+    time_quantum: u16,
+    proc_idle: PCB
 ) {
     let mut idle: bool = false;
+    let mut proc: &PCB;
     while !shut_down {
-        let proc: PCB = process_fetch_readyq(readyq);
-        if (proc == None) {
+        let proc_option: Option<&PCB> = process_fetch_readyq(readyq);
+        if proc_option.is_none() {
             idle = true;
             // Overwriting reg_state with idle.
             // Since nothing is in the readyq (process -> idle) or (idle -> idle)
-            process_context_switch(regs, proc_idle, None);
-            curr_pid = proc_idle.pid;
+            process_context_switch(regs, Some(proc_idle), None);
+            curr_pid = &mut proc_idle.pid;
         } else {
             idle = false;
-            // print!("[scheduler] (process_execute) : Running Process: {}\n", proc.pid);
+            proc = proc_option.unwrap();
 
             // Overwriting reg_state with readyq front.
             // Proper 2 process context switch wouldnt work
             // Consider the case when first process is submitted (idle -> process)
-            process_context_switch(regs, proc, None);
-            curr_pid = proc.pid;
+            process_context_switch(regs, Some(proc), None);
+            curr_pid = &mut (*proc).pid;
         }
 
-        let proc_state: i8 = cpu::cpu_operation(time_quantum);
+        let proc_state: i8 = cpu::cpu_operation(&mut regs, &mut mem, time_quantum);
         // -1 = Time Quantum Expired
         // 1 = Process Exit (either intentional or error)
         if proc_state == -1 {
             if !idle {
                 // (idle -> idle)
                 // Context Switch between current and incoming process (process -> process)
-                let proc_in: PCB = rotate_readyq(&mut rqreadyq);
-                process_context_switch(regs, proc_in, proc);
-                println!("[scheduler] (process_execute) : Switching Process.");
-                println!("    PID in: {}, out: {}", proc_in.pid, proc->pid);
-                println!(
-                    "    PC in: {}, out: {}",
-                    proc_in.reg_state.pc.reg_val, proc.reg_state.pc.reg_val
-                );
-                print!("\n");
+                let proc_in_option: Option<&PCB> = rotate_readyq(&mut readyq);
+                if proc_in_option.is_some() {
+                    let proc_in: &PCB = proc_in_option.unwrap();
+
+                    process_context_switch(regs, Some(proc_in), Some(proc));
+                    println!("[scheduler] (process_execute) : Switching Process.");
+                    println!("\t PID in: {}, out: {}", proc_in.pid, proc.pid);
+                    println!(
+                        "\t PC in: {}, out: {}",
+                        proc_in.reg_state.pc.reg_val, proc.reg_state.pc.reg_val
+                    );
+                    print!("\n");
+                }
             }
-        } else if (proc_state == 1) {
+        } else if proc_state == 1 {
             process_exit(&mut readyq, &mut pcblist, proc, true);
         } else {
             eprintln!(
