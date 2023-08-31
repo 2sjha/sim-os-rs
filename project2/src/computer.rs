@@ -37,23 +37,29 @@ fn boot_system(
 ) -> (
     Arc<Mutex<RegisterFile>>,
     Arc<Mutex<Memory>>,
-    Arc<Mutex<Vec<PCB>>>,
-    Arc<Mutex<VecDeque<PCB>>>,
+    Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
+    Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     Arc<Mutex<u16>>,
-    PCB,
+    Arc<Mutex<PCB>>,
 ) {
     let mut regs: RegisterFile = cpu::cpu_regs_init();
     let mut mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
-    let (pcblist, readyq, proc_idle, pid_count) = scheduler::scheduler_init(&mut mem);
-    let pcblist: Vec<PCB> = Vec::new();
+    let mem_arc: Arc<Mutex<Memory>> = Arc::new(Mutex::new(mem));
+    let (pcblist,
+        readyq,
+        proc_idle,
+        pid_count)
+            = scheduler::scheduler_init(&mem_arc);
+    let pcblist: Vec<Arc<Mutex<PCB>>> = Vec::new();
+
     print::print_init(pmconfig);
 
     (
         Arc::new(Mutex::new(regs)),
-        Arc::new(Mutex::new(mem)),
+        mem_arc,
         Arc::new(Mutex::new(pcblist)),
-        Arc::new(Mutex::new(readyq)),
-        Arc::new(Mutex::new(pid_count)),
+        readyq,
+        pid_count,
         proc_idle,
     )
 }
@@ -93,13 +99,13 @@ pub fn run() {
     let mut config_str: String = String::new();
     let mut sysconfig: SysConfig = SysConfig::new();
     let mut pmconfig: PrintManagerConfig = PrintManagerConfig::new();
-    let mut shut_down: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    let mut regs: Arc<Mutex<RegisterFile>>;
-    let mut mem: Arc<Mutex<Memory>>;
-    let mut pcblist: Arc<Mutex<Vec<PCB>>>;
-    let mut readyq: Arc<Mutex<VecDeque<PCB>>>;
-    let mut proc_idle: PCB;
-    let mut pid_count: Arc<Mutex<u16>>;
+    let shut_down: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    let regs: Arc<Mutex<RegisterFile>>;
+    let mem: Arc<Mutex<Memory>>;
+    let pcblist: Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>;
+    let readyq: Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>;
+    let proc_idle: Arc<Mutex<PCB>>;
+    let pid_count: Arc<Mutex<u16>>;
 
     let config_f_result: Result<usize, std::io::Error> = config_f.read_to_string(&mut config_str);
     if config_f_result.is_err() {
@@ -109,14 +115,20 @@ pub fn run() {
 
     parse_config_params(config_str, &mut sysconfig, &mut pmconfig);
     (regs, mem, pcblist, readyq, pid_count, proc_idle) = boot_system(&mut sysconfig, &mut pmconfig);
+    let regs_clone = Arc::clone(&regs);
+    let mem_clone = Arc::clone(&mem);
+    let shut_down_clone = Arc::clone(&shut_down);
+    let pcblist_clone = Arc::clone(&pcblist);
+    let readyq_clone = Arc::clone(&readyq);
+    let pid_count_clone = Arc::clone(&pid_count);
     thread::spawn(move || {
         shell::shell_operation(
-            Arc::clone(&regs),
-            Arc::clone(&mem),
-            Arc::clone(&shut_down),
-            Arc::clone(&pcblist),
-            Arc::clone(&readyq),
-            Arc::clone(&pid_count),
+            regs_clone,
+            mem_clone,
+            shut_down_clone,
+            pcblist_clone,
+            readyq_clone,
+            pid_count_clone,
         )
     });
 

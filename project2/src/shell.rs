@@ -7,7 +7,7 @@ use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::{fs, io};
 
-pub fn shell_load_prog(mem: Arc<Mutex<Memory>>, prog_fname: &str, p_addr: usize) {
+pub fn shell_load_prog(mem: &Arc<Mutex<Memory>>, prog_fname: &str, p_addr: usize) {
     let mut n_code: usize = 0;
     let mut n_data: usize = 0;
     let mut op_code: u16;
@@ -43,8 +43,8 @@ pub fn shell_load_prog(mem: Arc<Mutex<Memory>>, prog_fname: &str, p_addr: usize)
             .parse::<i32>()
             .unwrap_or_else(|_| panic!("Couldn't read operand: {}", prog_line[1]));
 
-        mem.arr[i] = op_code as i32;
-        mem.arr[i + 1] = operand;
+        mem.lock().unwrap().arr[i] = op_code as i32;
+        mem.lock().unwrap().arr[i + 1] = operand;
 
         i += 2;
         j += 1;
@@ -57,22 +57,22 @@ pub fn shell_load_prog(mem: Arc<Mutex<Memory>>, prog_fname: &str, p_addr: usize)
             .parse::<i32>()
             .unwrap_or_else(|_| panic!("Couldn't read data: {}", prog_line));
 
-        mem.arr[i] = operand;
+        mem.lock().unwrap().arr[i] = operand;
 
         i += 1;
         j += 1;
     }
 }
 
-fn shell_terminate_system(shut_down: &bool) {
+fn shell_terminate_system(shut_down: &mut bool) {
     println!("[shell] (shell_terminate_system) : Shell shut down started.");
     *shut_down = true;
 }
 
 fn shell_process_submit(
     mem: &Arc<Mutex<Memory>>,
-    pcblist: &Arc<Mutex<Vec<PCB>>>,
-    readyq: &Arc<Mutex<VecDeque<PCB>>>,
+    pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
+    readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     pid_count: &Arc<Mutex<u16>>,
 ) {
     let mut prog_input: String = String::new();
@@ -109,11 +109,11 @@ fn shell_print_memory(mem: &Memory) {
     memory::mem_dump(mem);
 }
 
-fn shell_print_ready_q(readyq: &VecDeque<PCB>) {
+fn shell_print_ready_q(readyq: &VecDeque<Arc<Mutex<PCB>>>) {
     scheduler::process_dump_ready_q(readyq);
 }
 
-fn shell_print_pcb_list(pcblist: &Vec<PCB>) {
+fn shell_print_pcb_list(pcblist: &Vec<Arc<Mutex<PCB>>>) {
     scheduler::process_dump_pcb_list(pcblist);
 }
 
@@ -133,13 +133,13 @@ fn shell_command(
     regs: &Arc<Mutex<RegisterFile>>,
     mem: &Arc<Mutex<Memory>>,
     shut_down: &Arc<Mutex<bool>>,
-    pcblist: &Arc<Mutex<Vec<PCB>>>,
-    readyq: &Arc<Mutex<VecDeque<PCB>>>,
+    pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
+    readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     pid_count: &Arc<Mutex<u16>>,
     cmd: &u8,
 ) {
     match cmd {
-        0 => shell_terminate_system(&shut_down.lock().unwrap()),
+        0 => shell_terminate_system(&mut shut_down.lock().unwrap()),
         1 => shell_process_submit(mem, pcblist, readyq, pid_count),
         2 => shell_print_registers(&regs.lock().unwrap()),
         3 => shell_print_memory(&mem.lock().unwrap()),
@@ -154,8 +154,8 @@ pub fn shell_operation(
     regs: Arc<Mutex<RegisterFile>>,
     mem: Arc<Mutex<Memory>>,
     shut_down: Arc<Mutex<bool>>,
-    pcblist: Arc<Mutex<Vec<PCB>>>,
-    readyq: Arc<Mutex<VecDeque<PCB>>>,
+    pcblist: Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
+    readyq: Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     pid_count: Arc<Mutex<u16>>,
 ) {
     let mut cmd_str: String = String::new();

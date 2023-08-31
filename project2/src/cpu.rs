@@ -2,10 +2,12 @@ use crate::memory::{self, Memory};
 use crate::shell;
 use std::{thread, time};
 
+#[derive(Clone, Copy)]
 pub struct Register {
     pub reg_val: i32,
 }
 
+#[derive(Clone, Copy)]
 pub struct RegisterFile {
     pub pc: Register,
     pub ir0: Register,
@@ -19,10 +21,6 @@ pub struct RegisterFile {
 impl Register {
     fn new(reg_val: i32) -> Register {
         Self { reg_val: reg_val }
-    }
-
-    fn from(reg_val: &i32) -> Register {
-        Self { reg_val: *reg_val }
     }
 }
 
@@ -41,13 +39,13 @@ impl RegisterFile {
 
     pub fn from(reg_state: &RegisterFile) -> RegisterFile {
         Self {
-            pc: Register::from(&reg_state.pc.reg_val),
-            ir0: Register::from(&reg_state.ir0.reg_val),
-            ir1: Register::from(&reg_state.ir1.reg_val),
-            ac: Register::from(&reg_state.ac.reg_val),
-            mar: Register::from(&reg_state.mar.reg_val),
-            mbr: Register::from(&reg_state.mbr.reg_val),
-            base: Register::from(&reg_state.base.reg_val),
+            pc: reg_state.pc,
+            ir0: reg_state.ir0,
+            ir1: reg_state.ir1,
+            ac: reg_state.ac,
+            mar: reg_state.mar,
+            mbr: reg_state.mbr,
+            base: reg_state.base,
         }
     }
 }
