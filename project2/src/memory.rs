@@ -18,7 +18,7 @@ pub fn mem_init(mem_size: usize) -> Memory {
     Memory::new(mem_size)
 }
 
-pub fn mem_read(mut regs: &mut RegisterFile, mem: &Memory) {
+pub fn mem_read(regs: &mut RegisterFile, mem: &Memory) {
     if regs.mar.reg_val < 0 {
         panic!("invalid mem address: {}", regs.mar.reg_val);
     }

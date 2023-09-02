@@ -1,4 +1,4 @@
-use crate::cpu::{self, RegisterFile};
+use crate::cpu::{self, Register, RegisterFile};
 use crate::memory::Memory;
 use crate::print;
 use crate::shell;
@@ -115,18 +115,6 @@ fn process_insert_readyq(readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>, proc: A
     readyq.lock().unwrap().push_back(proc.clone());
 }
 
-fn rotate_readyq(readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>) -> Option<&Arc<Mutex<PCB>>> {
-    if readyq.lock().unwrap().is_empty() {
-        return None;
-    }
-
-    let proc_front: &Arc<Mutex<PCB>> = (readyq.lock().unwrap().front()).unwrap();
-    readyq.lock().unwrap().pop_front();
-    readyq.lock().unwrap().push_back(*proc_front);
-
-    readyq.lock().unwrap().front()
-}
-
 pub fn process_dump_ready_q(readyq: &VecDeque<Arc<Mutex<PCB>>>) {
     println!("===========================================");
     println!("           readyq Dump. RQ Size: {}", readyq.len());
@@ -153,26 +141,30 @@ pub fn process_dump_ready_q(readyq: &VecDeque<Arc<Mutex<PCB>>>) {
     print!("\n");
 }
 
-fn process_context_switch(mut regs: RegisterFile, proc_in: Option<&PCB>, proc_out: Option<&PCB>) {
-    if proc_out.is_some() {
-        proc_out.unwrap().reg_state = regs;
+fn process_context_switch(
+    regs: &Arc<Mutex<RegisterFile>>,
+    proc_in_regs: Option<&RegisterFile>,
+    proc_out_regs: Option<&mut RegisterFile>,
+) {
+    if proc_out_regs.is_some() {
+        *proc_out_regs.unwrap() = *regs.lock().unwrap();
     }
 
-    if proc_in.is_some() {
-        regs = proc_in.unwrap().reg_state;
+    if proc_in_regs.is_some() {
+        *regs.lock().unwrap() = *proc_in_regs.unwrap();
     }
 }
 
 fn process_init_idle(
     mem: &Arc<Mutex<Memory>>,
-    pcblist: &Vec<Arc<Mutex<PCB>>>,
+    pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
     pid_count: &Arc<Mutex<u16>>,
 ) -> Arc<Mutex<PCB>> {
     let base_idle: u16 = 0;
     shell::shell_load_prog(mem, "prog_idle", base_idle as usize);
 
     process_init_pcb(
-        &Arc::new(Mutex::new(*pcblist)),
+        &Arc::clone(pcblist),
         pid_count,
         String::from("prog_idle"),
         base_idle,
@@ -187,14 +179,15 @@ pub fn scheduler_init(
     Arc<Mutex<PCB>>,
     Arc<Mutex<u16>>,
 ) {
-    let mut pid_count: u16 = 0;
-    let mut pcblist: Vec<Arc<Mutex<PCB>>> = process_init_pcb_list(&mem.lock().unwrap());
-    let mut readyq: VecDeque<Arc<Mutex<PCB>>> = process_init_readyq();
+    let pid_count: u16 = 0;
+    let pcblist: Vec<Arc<Mutex<PCB>>> = process_init_pcb_list(&mem.lock().unwrap());
+    let pcblist_arc = Arc::new(Mutex::new(pcblist));
+    let readyq: VecDeque<Arc<Mutex<PCB>>> = process_init_readyq();
     let proc_idle: Arc<Mutex<PCB>> =
-        process_init_idle(mem, &pcblist, &Arc::new(Mutex::new(pid_count)));
+        process_init_idle(mem, &pcblist_arc, &Arc::new(Mutex::new(pid_count)));
 
     (
-        Arc::new(Mutex::new(pcblist)),
+        pcblist_arc,
         Arc::new(Mutex::new(readyq)),
         proc_idle,
         Arc::new(Mutex::new(pid_count)),
@@ -202,17 +195,17 @@ pub fn scheduler_init(
 }
 
 pub fn process_submit(
-    mut pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
-    mut readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
-    mut pid_count: &Arc<Mutex<u16>>,
+    pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
+    readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
+    pid_count: &Arc<Mutex<u16>>,
     p_fname: String,
     p_base: u16,
 ) {
     let new_proc: Arc<Mutex<PCB>> = process_init_pcb(pcblist, pid_count, p_fname, p_base);
 
     print::print_init_spool(new_proc.lock().unwrap().pid);
-    process_insert_readyq(readyq, new_proc);
-    print!(
+    process_insert_readyq(readyq, Arc::clone(&new_proc));
+    println!(
         "[scheduler] (process_submit) : New Process (PID = {}) submitted.",
         new_proc.lock().unwrap().pid
     );
@@ -221,15 +214,15 @@ pub fn process_submit(
 fn process_exit(
     readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
-    proc: PCB,
+    proc: Arc<Mutex<PCB>>,
     pexit: bool,
 ) {
-    let exit_pid = proc.pid;
+    let exit_pid = proc.lock().unwrap().pid;
     if pexit {
         print::print_end_spool(exit_pid);
     }
 
-    process_dispose_pcb(&mut pcblist, exit_pid);
+    process_dispose_pcb(pcblist, exit_pid);
     readyq.lock().unwrap().pop_front();
 
     println!(
@@ -243,9 +236,9 @@ pub fn scheduler_terminate(
     pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
 ) {
     while !readyq.lock().unwrap().is_empty() {
-        let proc_option: Option<&Arc<Mutex<PCB>>> = readyq.lock().unwrap().front();
-        if proc_option.is_some() {
-            process_exit(readyq, pcblist, *proc_option.unwrap().lock().unwrap(), false);
+        let curr_proc: Option<Arc<Mutex<PCB>>> = readyq.lock().unwrap().pop_front();
+        if curr_proc.is_some() {
+            process_exit(readyq, pcblist, curr_proc.unwrap(), false);
         }
     }
     print!("[scheduler] (scheduler_terminate) : Scheduler shut down complete.");
@@ -264,30 +257,24 @@ pub fn process_execute(
     proc_idle: Arc<Mutex<PCB>>,
 ) {
     let mut idle: bool;
-    let mut proc: &Arc<Mutex<PCB>>;
     while !(*shut_down.lock().unwrap()) {
-        let ready_q_unwrapped = readyq.lock().unwrap();
-        let proc_option: Option<&Arc<Mutex<PCB>>> = ready_q_unwrapped.front();
+        let mut ready_q_unwrapped = readyq.lock().unwrap();
+        let curr_proc: Option<Arc<Mutex<PCB>>> = ready_q_unwrapped.pop_front();
 
-        if proc_option.is_none() {
+        if curr_proc.is_none() {
             idle = true;
             // Overwriting reg_state with idle.
             // Since nothing is in the readyq (process -> idle) or (idle -> idle)
-            process_context_switch(
-                *regs.lock().unwrap(),
-                Some(&proc_idle.lock().unwrap()),
-                None,
-            );
+            process_context_switch(&regs, Some(&proc_idle.lock().unwrap().reg_state), None);
             *curr_pid.lock().unwrap() = proc_idle.lock().unwrap().pid;
         } else {
             idle = false;
-            proc = proc_option.unwrap();
-
             // Overwriting reg_state with readyq front.
             // Proper 2 process context switch wouldnt work
             // Consider the case when first process is submitted (idle -> process)
-            process_context_switch(*regs.lock().unwrap(), Some(&proc.lock().unwrap()), None);
-            *curr_pid.lock().unwrap() = (*proc.lock().unwrap()).pid;
+            let proc_in = curr_proc.as_ref().unwrap().lock().unwrap();
+            process_context_switch(&regs, Some(&proc_in.reg_state), None);
+            *curr_pid.lock().unwrap() = proc_in.pid;
         }
 
         let proc_state: i8 = cpu::cpu_operation(
@@ -295,44 +282,48 @@ pub fn process_execute(
             &mut mem.lock().unwrap(),
             time_quantum,
         );
+
         // -1 = Time Quantum Expired
         // 1 = Process Exit (either intentional or error)
         if proc_state == -1 {
             if !idle {
-                // (idle -> idle)
                 // Context Switch between current and incoming process (process -> process)
-                let proc_in_option: Option<&Arc<Mutex<PCB>>> =
-                    rotate_readyq(&readyq);
-                if proc_in_option.is_some() {
-                    let proc_in: &Arc<Mutex<PCB>> = proc_in_option.unwrap();
+                let proc_in: Option<Arc<Mutex<PCB>>> = ready_q_unwrapped.pop_front();
+                if proc_in.is_some() {
+                    let proc_in_arc: Arc<Mutex<PCB>> = proc_in.unwrap();
+                    let proc_in_pid: u16 = proc_in_arc.lock().unwrap().pid;
+                    let proc_in_pc: Register = proc_in_arc.lock().unwrap().reg_state.pc;
 
-                    process_context_switch(
-                        *regs.lock().unwrap(),
-                        Some(&proc_in.lock().unwrap()),
-                        Some(&proc.lock().unwrap()),
-                    );
-                    println!("[scheduler] (process_execute) : Switching Process.");
-                    println!(
-                        "\t PID in: {}, out: {}",
-                        proc_in.lock().unwrap().pid,
-                        proc.lock().unwrap().pid
-                    );
-                    println!(
-                        "\t PC in: {}, out: {}",
-                        proc_in.lock().unwrap().reg_state.pc.reg_val,
-                        proc.lock().unwrap().reg_state.pc.reg_val
-                    );
-                    print!("\n");
+                    if curr_proc.is_some() {
+                        {
+                            let mut proc_out = curr_proc.as_ref().unwrap().lock().unwrap();
+                            process_context_switch(
+                                &regs,
+                                Some(&proc_in_arc.lock().unwrap().reg_state),
+                                Some(&mut proc_out.reg_state),
+                            );
+
+                            println!("[scheduler] (process_execute) : Switching Process.");
+                            println!("\t PID in: {}, out: {}", proc_in_pid, proc_out.pid);
+                            println!(
+                                "\t PC in: {}, out: {}",
+                                proc_in_pc.reg_val, proc_out.reg_state.pc.reg_val
+                            );
+                            print!("\n");
+                        }
+
+                        ready_q_unwrapped.push_back(curr_proc.unwrap());
+                    } else {
+                        process_context_switch(
+                            &regs,
+                            Some(&proc_in_arc.lock().unwrap().reg_state),
+                            None,
+                        );
+                    }
                 }
             }
         } else if proc_state == 1 {
-            let exit_proc = *proc.lock().unwrap();
-            process_exit(
-                &readyq,
-                &pcblist,
-                exit_proc,
-                true,
-            );
+            process_exit(&readyq, &pcblist, curr_proc.unwrap(), true);
         } else {
             eprintln!(
                 "[scheduler] (process_execute) : Unexpected CPU status: {}. Shutting Down Now.",

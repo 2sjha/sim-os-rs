@@ -42,22 +42,20 @@ fn boot_system(
     Arc<Mutex<u16>>,
     Arc<Mutex<PCB>>,
 ) {
-    let mut regs: RegisterFile = cpu::cpu_regs_init();
-    let mut mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
+    let regs: RegisterFile = cpu::cpu_regs_init();
+    let mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
     let mem_arc: Arc<Mutex<Memory>> = Arc::new(Mutex::new(mem));
     let (pcblist,
         readyq,
         proc_idle,
         pid_count)
             = scheduler::scheduler_init(&mem_arc);
-    let pcblist: Vec<Arc<Mutex<PCB>>> = Vec::new();
-
     print::print_init(pmconfig);
 
     (
         Arc::new(Mutex::new(regs)),
         mem_arc,
-        Arc::new(Mutex::new(pcblist)),
+        pcblist,
         readyq,
         pid_count,
         proc_idle,
@@ -66,8 +64,8 @@ fn boot_system(
 
 fn parse_config_params(
     config_str: String,
-    mut sysconfig: &mut SysConfig,
-    mut pmconfig: &mut PrintManagerConfig,
+    sysconfig: &mut SysConfig,
+    pmconfig: &mut PrintManagerConfig,
 ) {
     // config.sys must be in this format = "M:{}\nTQ:{}\nPT:{}\n"
     let config_str_parts: Vec<&str> = config_str.split("\n").collect();

@@ -36,25 +36,13 @@ impl RegisterFile {
             base: Register::new(0),
         }
     }
-
-    pub fn from(reg_state: &RegisterFile) -> RegisterFile {
-        Self {
-            pc: reg_state.pc,
-            ir0: reg_state.ir0,
-            ir1: reg_state.ir1,
-            ac: reg_state.ac,
-            mar: reg_state.mar,
-            mbr: reg_state.mbr,
-            base: reg_state.base,
-        }
-    }
 }
 
 pub fn cpu_regs_init() -> RegisterFile {
     RegisterFile::new()
 }
 
-fn cpu_mem_address(mut regs: &mut RegisterFile, mem: &Memory, mem_addr: i32) -> i32 {
+fn cpu_mem_address(regs: &mut RegisterFile, mem: &Memory, mem_addr: i32) -> i32 {
     regs.mar.reg_val = regs.base.reg_val + mem_addr;
     memory::mem_read(regs, mem);
 
