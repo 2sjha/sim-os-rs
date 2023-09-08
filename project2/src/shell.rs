@@ -64,9 +64,9 @@ pub fn shell_load_prog(mem: &Arc<Mutex<Memory>>, prog_fname: &str, p_addr: usize
     }
 }
 
-fn shell_terminate_system(shut_down: &mut bool) {
+fn shell_terminate_system(shut_down: &Arc<Mutex<bool>>) {
     println!("[shell] (shell_terminate_system) : Shell shut down started.");
-    *shut_down = true;
+    *shut_down.lock().unwrap() = true;
 }
 
 fn shell_process_submit(
@@ -85,6 +85,11 @@ fn shell_process_submit(
         .expect("Could not input program details.");
 
     let prog_in_parts: Vec<&str> = prog_input.trim_end().split(" ").collect();
+    if prog_in_parts.len() != 2 {
+        eprintln!("Invalid input");
+        return;
+    }
+
     prog_fname = prog_in_parts[0];
     base = prog_in_parts[1]
         .parse::<usize>()
@@ -101,27 +106,50 @@ fn shell_process_submit(
     );
 }
 
-fn shell_print_registers(regs: &RegisterFile) {
-    cpu::cpu_reg_dump(regs);
+fn shell_print_registers(regs: &Arc<Mutex<RegisterFile>>) {
+    cpu::cpu_reg_dump(&regs.lock().unwrap());
 }
 
-fn shell_print_memory(mem: &Memory) {
-    memory::mem_dump(mem);
+fn shell_print_memory(mem: &Arc<Mutex<Memory>>) {
+    memory::mem_dump(&mem.lock().unwrap());
 }
 
-fn shell_print_ready_q(readyq: &VecDeque<Arc<Mutex<PCB>>>) {
-    scheduler::process_dump_ready_q(readyq);
+fn shell_print_readyq(readyq_arc: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>) {
+    let readyq: VecDeque<Arc<Mutex<PCB>>>;
+    {
+        readyq = readyq_arc.lock().unwrap().clone();
+    }
+
+    scheduler::process_dump_readyq(&readyq);
 }
 
-fn shell_print_pcb_list(pcblist: &Vec<Arc<Mutex<PCB>>>) {
-    scheduler::process_dump_pcb_list(pcblist);
+fn shell_print_pcb_list(pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>) {
+    scheduler::process_dump_pcb_list(&pcblist.lock().unwrap());
 }
 
 fn shell_print_spools() {
     print::print_spool_dump();
 }
 
-pub fn shell_instruction(regs: &RegisterFile, mem: &Memory, cmd: i32) {
+fn shell_update_scheduler_sleep_time(scheduler_sleep_time: &Arc<Mutex<u64>>) {
+    let mut inp_str: String = String::new();
+    println!("Input New Scheduler sleep time: ");
+    io::stdin()
+        .read_line(&mut inp_str)
+        .expect("Couldn't read input.");
+
+    let inp_str_trimmed: &str = inp_str.trim_end();
+    let inp = inp_str_trimmed.parse::<u64>().unwrap_or_else(|_| {
+        println!("Invalid sleep time: {}", inp_str);
+        u64::MAX
+    });
+
+    if inp != u64::MAX {
+        *scheduler_sleep_time.lock().unwrap() = inp;
+    }
+}
+
+pub fn shell_instruction(regs: &Arc<Mutex<RegisterFile>>, mem: &Arc<Mutex<Memory>>, cmd: i32) {
     match cmd {
         2 => shell_print_registers(regs),
         3 => shell_print_memory(mem),
@@ -136,16 +164,18 @@ fn shell_command(
     pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
     readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     pid_count: &Arc<Mutex<u16>>,
+    scheduler_sleep_time: &Arc<Mutex<u64>>,
     cmd: &u8,
 ) {
     match cmd {
-        0 => shell_terminate_system(&mut shut_down.lock().unwrap()),
+        0 => shell_terminate_system(shut_down),
         1 => shell_process_submit(mem, pcblist, readyq, pid_count),
-        2 => shell_print_registers(&regs.lock().unwrap()),
-        3 => shell_print_memory(&mem.lock().unwrap()),
-        4 => shell_print_ready_q(&readyq.lock().unwrap()),
-        5 => shell_print_pcb_list(&pcblist.lock().unwrap()),
+        2 => shell_print_registers(regs),
+        3 => shell_print_memory(mem),
+        4 => shell_print_readyq(readyq),
+        5 => shell_print_pcb_list(pcblist),
         6 => shell_print_spools(),
+        7 => shell_update_scheduler_sleep_time(scheduler_sleep_time),
         _ => eprintln!("[shell] (shell_command) : Invalid Command {}.", cmd),
     }
 }
@@ -157,6 +187,7 @@ pub fn shell_operation(
     pcblist: Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
     readyq: Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     pid_count: Arc<Mutex<u16>>,
+    scheduler_sleep_time: Arc<Mutex<u64>>,
 ) {
     let mut cmd_str: String = String::new();
     let mut cmd: u8;
@@ -167,12 +198,24 @@ pub fn shell_operation(
             .expect("Couldn't read input command.");
 
         let cmd_str_trimmed: &str = cmd_str.trim_end();
-        cmd = cmd_str_trimmed
-            .parse::<u8>()
-            .unwrap_or_else(|_| panic!("Invalid shell command: {}", cmd_str));
+        cmd = cmd_str_trimmed.parse::<u8>().unwrap_or_else(|_| {
+            println!("Invalid shell command: {}", cmd_str);
+            u8::MAX
+        });
         cmd_str.clear();
 
-        shell_command(&regs, &mem, &shut_down, &pcblist, &readyq, &pid_count, &cmd);
+        if cmd != u8::MAX {
+            shell_command(
+                &regs,
+                &mem,
+                &shut_down,
+                &pcblist,
+                &readyq,
+                &pid_count,
+                &scheduler_sleep_time,
+                &cmd,
+            );
+        }
     }
 
     println!("[shell] (shell_operation) : Shell shut down complete.\n");

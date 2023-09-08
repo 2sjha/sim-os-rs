@@ -45,11 +45,7 @@ fn boot_system(
     let regs: RegisterFile = cpu::cpu_regs_init();
     let mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
     let mem_arc: Arc<Mutex<Memory>> = Arc::new(Mutex::new(mem));
-    let (pcblist,
-        readyq,
-        proc_idle,
-        pid_count)
-            = scheduler::scheduler_init(&mem_arc);
+    let (pcblist, readyq, proc_idle, pid_count) = scheduler::scheduler_init(&mem_arc);
     print::print_init(pmconfig);
 
     (
@@ -118,7 +114,8 @@ pub fn run() {
     let shut_down_clone = Arc::clone(&shut_down);
     let pcblist_clone = Arc::clone(&pcblist);
     let readyq_clone = Arc::clone(&readyq);
-    let pid_count_clone = Arc::clone(&pid_count);
+    let scheduler_sleep_time = Arc::new(Mutex::new(10 as u64));
+    let scheduler_sleep_time_clone = Arc::clone(&scheduler_sleep_time);
     thread::spawn(move || {
         shell::shell_operation(
             regs_clone,
@@ -126,7 +123,8 @@ pub fn run() {
             shut_down_clone,
             pcblist_clone,
             readyq_clone,
-            pid_count_clone,
+            pid_count,
+            scheduler_sleep_time_clone
         )
     });
 
@@ -136,8 +134,8 @@ pub fn run() {
         regs,
         mem,
         shut_down,
-        pid_count,
         sysconfig.time_quantum,
         proc_idle,
+        scheduler_sleep_time
     );
 }

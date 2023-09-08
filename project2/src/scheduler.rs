@@ -1,9 +1,10 @@
-use crate::cpu::{self, Register, RegisterFile};
+use crate::cpu::{self, RegisterFile};
 use crate::memory::Memory;
 use crate::print;
 use crate::shell;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::{thread, time};
 
 #[derive(Clone)]
 pub struct PCB {
@@ -23,10 +24,10 @@ impl PCB {
 
 pub fn process_init_pcb_list(mem: &Memory) -> Vec<Arc<Mutex<PCB>>> {
     // We assume that the average user program
-    // is about 40 instructions long, so 80 words.
+    // is about 30 instructions long, so 60 words.
     // Thus, we can have (mem_size/avg_prog_size) processes
     // active in memory at a time.
-    const AVG_PROG_SIZE: usize = 80;
+    const AVG_PROG_SIZE: usize = 60;
     let pcbl_size: usize = mem.size / AVG_PROG_SIZE;
     let pcblist: Vec<Arc<Mutex<PCB>>> = Vec::with_capacity(pcbl_size);
 
@@ -48,9 +49,12 @@ pub fn process_init_pcb(
     proc.reg_state.mar.reg_val = 0;
     proc.reg_state.mbr.reg_val = 0;
 
-    proc.pid = pid_count.lock().unwrap().clone();
-    proc.prog_fname = fname;
-    *pid_count.lock().unwrap() += 1;
+    {
+        let mut curr_pid = pid_count.lock().unwrap();
+        proc.pid = *curr_pid;
+        proc.prog_fname = fname;
+        *curr_pid += 1;
+    }
 
     let pcb_arc = Arc::new(Mutex::new(proc));
     pcblist.lock().unwrap().push(Arc::clone(&pcb_arc));
@@ -59,18 +63,17 @@ pub fn process_init_pcb(
 }
 
 fn process_dispose_pcb(pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>, pid: u16) {
-    let mut r_index: usize = 0;
+    let mut r_index: usize = usize::MAX;
     let pcbl_len = pcblist.lock().unwrap().len();
     // Linear search process with pid in the PCB List and remove it
-    for i in 0..pcbl_len {
-        let proc = Arc::clone(&pcblist.lock().unwrap()[i]);
-        if proc.lock().unwrap().pid == pid {
+    for i in 1..pcbl_len {
+        if pid == pcblist.lock().unwrap()[i].lock().unwrap().pid {
             r_index = i;
             break;
         }
     }
 
-    if r_index != 0 {
+    if r_index != usize::MAX {
         pcblist.lock().unwrap().remove(r_index);
     } else {
         eprintln!("Couldn't find process with pid: {}", pid);
@@ -112,10 +115,10 @@ fn process_init_readyq() -> VecDeque<Arc<Mutex<PCB>>> {
 }
 
 fn process_insert_readyq(readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>, proc: Arc<Mutex<PCB>>) {
-    readyq.lock().unwrap().push_back(proc.clone());
+    readyq.lock().unwrap().push_back(proc);
 }
 
-pub fn process_dump_ready_q(readyq: &VecDeque<Arc<Mutex<PCB>>>) {
+pub fn process_dump_readyq(readyq: &VecDeque<Arc<Mutex<PCB>>>) {
     println!("===========================================");
     println!("           readyq Dump. RQ Size: {}", readyq.len());
     println!("===========================================");
@@ -127,18 +130,22 @@ pub fn process_dump_ready_q(readyq: &VecDeque<Arc<Mutex<PCB>>>) {
     }
 
     let mut proc_index = 0;
+    let mut proc_id: u16;
 
-    for proc in readyq {
+    for proc_arc in readyq {
+        {
+            proc_id = proc_arc.lock().unwrap().pid;
+        }
         if proc_index == 0 {
-            println!("{}: {} (Running)", proc_index, proc.lock().unwrap().pid);
+            println!("{}: {} (Running)", proc_index, proc_id);
         } else {
-            println!("{}: {}", proc_index, proc.lock().unwrap().pid);
+            println!("{}: {}", proc_index, proc_id);
         }
 
         proc_index += 1;
     }
 
-    print!("\n");
+    print!("\n\n");
 }
 
 fn process_context_switch(
@@ -179,18 +186,17 @@ pub fn scheduler_init(
     Arc<Mutex<PCB>>,
     Arc<Mutex<u16>>,
 ) {
-    let pid_count: u16 = 0;
+    let pid_count: Arc<Mutex<u16>> = Arc::new(Mutex::new(0));
     let pcblist: Vec<Arc<Mutex<PCB>>> = process_init_pcb_list(&mem.lock().unwrap());
     let pcblist_arc = Arc::new(Mutex::new(pcblist));
     let readyq: VecDeque<Arc<Mutex<PCB>>> = process_init_readyq();
-    let proc_idle: Arc<Mutex<PCB>> =
-        process_init_idle(mem, &pcblist_arc, &Arc::new(Mutex::new(pid_count)));
+    let proc_idle: Arc<Mutex<PCB>> = process_init_idle(mem, &pcblist_arc, &pid_count);
 
     (
         pcblist_arc,
         Arc::new(Mutex::new(readyq)),
         proc_idle,
-        Arc::new(Mutex::new(pid_count)),
+        pid_count,
     )
 }
 
@@ -212,7 +218,6 @@ pub fn process_submit(
 }
 
 fn process_exit(
-    readyq: &Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     pcblist: &Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
     proc: Arc<Mutex<PCB>>,
     pexit: bool,
@@ -223,7 +228,6 @@ fn process_exit(
     }
 
     process_dispose_pcb(pcblist, exit_pid);
-    readyq.lock().unwrap().pop_front();
 
     println!(
         "[scheduler] (process_exit) : Process (PID = {}) exited.",
@@ -238,7 +242,7 @@ pub fn scheduler_terminate(
     while !readyq.lock().unwrap().is_empty() {
         let curr_proc: Option<Arc<Mutex<PCB>>> = readyq.lock().unwrap().pop_front();
         if curr_proc.is_some() {
-            process_exit(readyq, pcblist, curr_proc.unwrap(), false);
+            process_exit(pcblist, curr_proc.unwrap(), false);
         }
     }
     print!("[scheduler] (scheduler_terminate) : Scheduler shut down complete.");
@@ -252,21 +256,24 @@ pub fn process_execute(
     regs: Arc<Mutex<RegisterFile>>,
     mem: Arc<Mutex<Memory>>,
     shut_down: Arc<Mutex<bool>>,
-    curr_pid: Arc<Mutex<u16>>,
     time_quantum: u16,
     proc_idle: Arc<Mutex<PCB>>,
+    scheduler_sleep_time: Arc<Mutex<u64>>
 ) {
     let mut idle: bool;
     while !(*shut_down.lock().unwrap()) {
-        let mut ready_q_unwrapped = readyq.lock().unwrap();
-        let curr_proc: Option<Arc<Mutex<PCB>>> = ready_q_unwrapped.pop_front();
+        let curr_proc: Option<Arc<Mutex<PCB>>>;
+
+        {
+            let mut readyq_unwrapped = readyq.lock().unwrap();
+            curr_proc = readyq_unwrapped.pop_front();
+        }
 
         if curr_proc.is_none() {
             idle = true;
             // Overwriting reg_state with idle.
             // Since nothing is in the readyq (process -> idle) or (idle -> idle)
             process_context_switch(&regs, Some(&proc_idle.lock().unwrap().reg_state), None);
-            *curr_pid.lock().unwrap() = proc_idle.lock().unwrap().pid;
         } else {
             idle = false;
             // Overwriting reg_state with readyq front.
@@ -274,12 +281,11 @@ pub fn process_execute(
             // Consider the case when first process is submitted (idle -> process)
             let proc_in = curr_proc.as_ref().unwrap().lock().unwrap();
             process_context_switch(&regs, Some(&proc_in.reg_state), None);
-            *curr_pid.lock().unwrap() = proc_in.pid;
         }
 
         let proc_state: i8 = cpu::cpu_operation(
-            &mut regs.lock().unwrap(),
-            &mut mem.lock().unwrap(),
+            &regs,
+            &mem,
             time_quantum,
         );
 
@@ -288,18 +294,29 @@ pub fn process_execute(
         if proc_state == -1 {
             if !idle {
                 // Context Switch between current and incoming process (process -> process)
-                let proc_in: Option<Arc<Mutex<PCB>>> = ready_q_unwrapped.pop_front();
+
+                // Rotate ReadyQ
+                let proc_in: Option<Arc<Mutex<PCB>>>;
+                {
+                    // Push TQ-expired process to back of queue
+                    let mut readyq_unwrapped = readyq.lock().unwrap();
+                    readyq_unwrapped.push_back(Arc::clone(curr_proc.as_ref().unwrap()));
+
+                    // Pop Next Incoming process to update CPU regs with its regs 
+                    proc_in = readyq_unwrapped.pop_front();
+                }
+
                 if proc_in.is_some() {
                     let proc_in_arc: Arc<Mutex<PCB>> = proc_in.unwrap();
                     let proc_in_pid: u16 = proc_in_arc.lock().unwrap().pid;
-                    let proc_in_pc: Register = proc_in_arc.lock().unwrap().reg_state.pc;
+                    let proc_in_regs: RegisterFile = proc_in_arc.lock().unwrap().reg_state;
 
                     if curr_proc.is_some() {
                         {
                             let mut proc_out = curr_proc.as_ref().unwrap().lock().unwrap();
                             process_context_switch(
                                 &regs,
-                                Some(&proc_in_arc.lock().unwrap().reg_state),
+                                Some(&proc_in_regs),
                                 Some(&mut proc_out.reg_state),
                             );
 
@@ -307,23 +324,27 @@ pub fn process_execute(
                             println!("\t PID in: {}, out: {}", proc_in_pid, proc_out.pid);
                             println!(
                                 "\t PC in: {}, out: {}",
-                                proc_in_pc.reg_val, proc_out.reg_state.pc.reg_val
+                                proc_in_regs.pc.reg_val, proc_out.reg_state.pc.reg_val
                             );
                             print!("\n");
                         }
-
-                        ready_q_unwrapped.push_back(curr_proc.unwrap());
-                    } else {
+                    } else { // Idle's TQ has expired, incoming process will run next
                         process_context_switch(
                             &regs,
                             Some(&proc_in_arc.lock().unwrap().reg_state),
                             None,
                         );
                     }
+
+                    // Push incoming process back to front so that loop will pop it and process it
+                    {
+                        let mut readyq_unwrapped = readyq.lock().unwrap();
+                        readyq_unwrapped.push_front(proc_in_arc);
+                    }
                 }
             }
         } else if proc_state == 1 {
-            process_exit(&readyq, &pcblist, curr_proc.unwrap(), true);
+            process_exit(&pcblist, curr_proc.unwrap(), true);
         } else {
             eprintln!(
                 "[scheduler] (process_execute) : Unexpected CPU status: {}. Shutting Down Now.",
@@ -332,7 +353,8 @@ pub fn process_execute(
             break;
         }
 
-        // usleep(1000000);
+        let sleep_millis = time::Duration::from_millis(*scheduler_sleep_time.lock().unwrap());
+        thread::sleep(sleep_millis);
     }
 
     println!("[scheduler] (process_execute) : Scheduler shut down started.");
