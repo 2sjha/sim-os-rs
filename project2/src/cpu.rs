@@ -141,7 +141,6 @@ pub fn cpu_operation(
             return 1;
         }
 
-        // TODO - solve ir0 = -1
         cpu_fetch_instruction(regs_arc, mem_arc);
         cpu_execute_instruction(regs_arc, mem_arc);
         i += 1;

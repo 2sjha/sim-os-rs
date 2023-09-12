@@ -33,7 +33,8 @@ impl SysConfig {
 
 fn boot_system(
     sysconfig: &SysConfig,
-    pmconfig: &PrintManagerConfig,
+    pmconfig: &mut PrintManagerConfig,
+    printer_child_pid: &mut u16,
 ) -> (
     Arc<Mutex<RegisterFile>>,
     Arc<Mutex<Memory>>,
@@ -46,7 +47,8 @@ fn boot_system(
     let mem: Memory = memory::mem_init(sysconfig.mem_size as usize);
     let mem_arc: Arc<Mutex<Memory>> = Arc::new(Mutex::new(mem));
     let (pcblist, readyq, proc_idle, pid_count) = scheduler::scheduler_init(&mem_arc);
-    print::print_init(pmconfig);
+
+    print::print_init(pmconfig, printer_child_pid);
 
     (
         Arc::new(Mutex::new(regs)),
@@ -100,6 +102,7 @@ pub fn run() {
     let readyq: Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>;
     let proc_idle: Arc<Mutex<PCB>>;
     let pid_count: Arc<Mutex<u16>>;
+    let mut printer_child_pid: u16 = 0;
 
     let config_f_result: Result<usize, std::io::Error> = config_f.read_to_string(&mut config_str);
     if config_f_result.is_err() {
@@ -108,34 +111,38 @@ pub fn run() {
     }
 
     parse_config_params(config_str, &mut sysconfig, &mut pmconfig);
-    (regs, mem, pcblist, readyq, pid_count, proc_idle) = boot_system(&mut sysconfig, &mut pmconfig);
-    let regs_clone = Arc::clone(&regs);
-    let mem_clone = Arc::clone(&mem);
-    let shut_down_clone = Arc::clone(&shut_down);
-    let pcblist_clone = Arc::clone(&pcblist);
-    let readyq_clone = Arc::clone(&readyq);
-    let scheduler_sleep_time = Arc::new(Mutex::new(10 as u64));
-    let scheduler_sleep_time_clone = Arc::clone(&scheduler_sleep_time);
-    thread::spawn(move || {
-        shell::shell_operation(
-            regs_clone,
-            mem_clone,
-            shut_down_clone,
-            pcblist_clone,
-            readyq_clone,
-            pid_count,
-            scheduler_sleep_time_clone
-        )
-    });
+    (regs, mem, pcblist, readyq, pid_count, proc_idle) =
+        boot_system(&mut sysconfig, &mut pmconfig, &mut printer_child_pid);
 
-    scheduler::process_execute(
-        pcblist,
-        readyq,
-        regs,
-        mem,
-        shut_down,
-        sysconfig.time_quantum,
-        proc_idle,
-        scheduler_sleep_time
-    );
+    if printer_child_pid != 0 {
+        let regs_clone = Arc::clone(&regs);
+        let mem_clone = Arc::clone(&mem);
+        let shut_down_clone = Arc::clone(&shut_down);
+        let pcblist_clone = Arc::clone(&pcblist);
+        let readyq_clone = Arc::clone(&readyq);
+        let scheduler_sleep_time = Arc::new(Mutex::new(10 as u64));
+        let scheduler_sleep_time_clone = Arc::clone(&scheduler_sleep_time);
+        thread::spawn(move || {
+            shell::shell_operation(
+                regs_clone,
+                mem_clone,
+                shut_down_clone,
+                pcblist_clone,
+                readyq_clone,
+                pid_count,
+                scheduler_sleep_time_clone,
+            )
+        });
+
+        scheduler::scheduler_execute(
+            pcblist,
+            readyq,
+            regs,
+            mem,
+            shut_down,
+            sysconfig.time_quantum,
+            proc_idle,
+            scheduler_sleep_time,
+        );
+    }
 }

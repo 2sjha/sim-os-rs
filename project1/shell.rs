@@ -92,8 +92,6 @@ fn shell_process_submit(mut mem: &mut Memory, mut regs: &mut RegisterFile) {
     regs.mbr.reg_val = 0;
 
     cpu::cpu_operation(&mut regs, &mut mem, 1000);
-
-    // scheduler::process_submit(prog_fname, base);
 }
 
 fn shell_print_registers(regs: &RegisterFile) {

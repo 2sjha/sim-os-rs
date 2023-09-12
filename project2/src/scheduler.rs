@@ -250,7 +250,7 @@ pub fn scheduler_terminate(
     print::print_terminate();
 }
 
-pub fn process_execute(
+pub fn scheduler_execute(
     pcblist: Arc<Mutex<Vec<Arc<Mutex<PCB>>>>>,
     readyq: Arc<Mutex<VecDeque<Arc<Mutex<PCB>>>>>,
     regs: Arc<Mutex<RegisterFile>>,
@@ -320,7 +320,7 @@ pub fn process_execute(
                                 Some(&mut proc_out.reg_state),
                             );
 
-                            println!("[scheduler] (process_execute) : Switching Process.");
+                            println!("[scheduler] (scheduler_execute) : Switching Process.");
                             println!("\t PID in: {}, out: {}", proc_in_pid, proc_out.pid);
                             println!(
                                 "\t PC in: {}, out: {}",
@@ -347,7 +347,7 @@ pub fn process_execute(
             process_exit(&pcblist, curr_proc.unwrap(), true);
         } else {
             eprintln!(
-                "[scheduler] (process_execute) : Unexpected CPU status: {}. Shutting Down Now.",
+                "[scheduler] (scheduler_execute) : Unexpected CPU status: {}. Shutting Down Now.",
                 proc_state
             );
             break;
@@ -357,6 +357,6 @@ pub fn process_execute(
         thread::sleep(sleep_millis);
     }
 
-    println!("[scheduler] (process_execute) : Scheduler shut down started.");
+    println!("[scheduler] (scheduler_execute) : Scheduler shut down started.");
     scheduler_terminate(&readyq, &pcblist);
 }

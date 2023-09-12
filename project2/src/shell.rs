@@ -133,7 +133,7 @@ fn shell_print_spools() {
 
 fn shell_update_scheduler_sleep_time(scheduler_sleep_time: &Arc<Mutex<u64>>) {
     let mut inp_str: String = String::new();
-    println!("Input New Scheduler sleep time: ");
+    println!("Input new scheduler sleep time: ");
     io::stdin()
         .read_line(&mut inp_str)
         .expect("Couldn't read input.");
