@@ -1,2 +1,11 @@
+# Sim-OS-rs
 /*/target
-*/computer.exe
+*.exe
+
+# Sim-OS C implementation
+*.o
+out
+*/build/*
+
+# WSL
+*Zone.Identifier

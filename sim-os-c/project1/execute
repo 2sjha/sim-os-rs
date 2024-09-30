@@ -1,0 +1,3 @@
+#!/bin/sh
+
+make && ./computer.exe comp.in 8 > comp.out && ./computer.exe comp.in 8 | wc
